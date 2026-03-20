@@ -88,7 +88,7 @@
   }
   .mobileControls {
     position: fixed; inset: auto 0 0 0; z-index: 6; pointer-events: none;
-    display: none; justify-content: space-between; align-items: end; padding: 14px;
+    display: none; justify-content: flex-end; align-items: end; padding: 14px;
   }
   .stickArea, .fireArea {
     pointer-events: auto;
@@ -96,9 +96,11 @@
   }
   .stickArea {
     width: 144px; height: 144px; border-radius: 50%;
-    background: rgba(255,255,255,0.05);
-    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.03);
+    border: 1px dashed rgba(255,255,255,0.08);
     position: relative;
+    opacity: 0;
+    pointer-events: none;
   }
   .stickBase, .stickKnob {
     position: absolute; border-radius: 50%; left: 50%; top: 50%; transform: translate(-50%, -50%);
@@ -122,6 +124,21 @@
     border: 1px solid rgba(255, 140, 170, 0.34);
     box-shadow: 0 0 25px rgba(255, 90, 120, 0.16);
     color: #ffd9e2; font-weight: 700; font-size: 16px;
+  }
+  .tapMoveHint {
+    position: fixed;
+    left: 12px;
+    bottom: 86px;
+    z-index: 7;
+    padding: 8px 12px;
+    border-radius: 999px;
+    background: rgba(7,12,25,0.55);
+    border: 1px solid rgba(145,205,255,0.18);
+    backdrop-filter: blur(8px);
+    font-size: 12px;
+    color: #d7ebff;
+    display: none;
+    pointer-events: none;
   }
   .hintBar {
     position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);
@@ -184,6 +201,7 @@
     .panel .title { font-size: 12px; }
     .small { font-size: 12px; }
     .mobileControls { display: flex; }
+    .tapMoveHint { display: block; }
   }
 </style>
 </head>
@@ -201,7 +219,7 @@
   <div class="panel small">
     <div><span class="kbd">WASD / 方向鍵</span> 移動</div>
     <div><span class="kbd">空白鍵</span> 射擊　<span class="kbd">P</span> 暫停</div>
-    <div>手機：左下搖桿、右下開火</div>
+    <div>手機：點畫面移動、右下開火</div>
   </div>
 </div>
 
@@ -230,6 +248,7 @@
 </div>
 
 <div class="hintBar" id="hintBar">擊落敵艦、吃強化核心，撐過每一關！</div>
+<div class="tapMoveHint" id="tapMoveHint">手機：點哪飛哪｜右下 FIRE 按住射擊</div>
 
 <script>
 (() => {
@@ -255,7 +274,7 @@
   const isMobile = () => window.innerWidth <= 900 || ('ontouchstart' in window);
 
   const keys = new Set();
-  const touch = { moveId: null, fireId: null, vx: 0, vy: 0, firing: false };
+  const touch = { moveId: null, fireId: null, vx: 0, vy: 0, firing: false, targetActive: false, targetX: 0, targetY: 0 };
 
   const rand = (a, b) => Math.random() * (b - a) + a;
 
@@ -579,6 +598,11 @@
       invuln: 0,
       bombFlash: 0
     };
+    touch.vx = 0;
+    touch.vy = 0;
+    touch.targetActive = false;
+    touch.targetX = game.player.x;
+    touch.targetY = game.player.y;
     makeField();
     overlay.style.display = 'none';
     hintBar.textContent = '擊落敵艦、吃強化核心，撐過每一關！';
@@ -621,7 +645,7 @@
     overlayCard.innerHTML = `
       <h1 style="font-size:clamp(28px,5vw,46px)">操作說明</h1>
       <p>電腦版：<span class="kbd">WASD</span> 或 <span class="kbd">方向鍵</span> 移動，<span class="kbd">空白鍵</span> 持續開火，<span class="kbd">P</span> 暫停。</p>
-      <p>手機版：左下虛擬搖桿移動，右下 <span class="kbd">FIRE</span> 開火。</p>
+      <p>手機版：直接點擊或拖曳畫面左側/中間，戰機就會朝手指位置飛去；右下 <span class="kbd">FIRE</span> 持續開火。</p>
       <p>每一關會先有一般敵機編隊，之後出現大型 Boss。打倒 Boss 就進入下一關。</p>
       <div class="btnline">
         <button id="backBtn">返回主畫面</button>
@@ -640,7 +664,7 @@
     overlayCard.innerHTML = `
       <h1>STARFALL</h1>
       <h2>ASSAULT DELUXE</h2>
-      <p>原創縱向外太空射擊遊戲。駕駛銀翼戰機突破敵艦編隊、閃避能量彈幕，挑戰多關卡與大型 Boss。子彈飛行一段時間後會自動消失，畫面更乾淨。</p>
+      <p>原創縱向外太空射擊遊戲。駕駛銀翼戰機突破敵艦編隊、閃避能量彈幕，挑戰多關卡與大型 Boss。手機版已改成點哪飛哪，操作更直覺。</p>
       <p>可先輸入玩家名稱，遊戲結束後會自動記錄最後得分與排名。</p>
       <input id="playerNameInput" class="nameInput" maxlength="20" placeholder="請輸入玩家名稱" value="${escapeHtml(savedName)}" />
       ${leaderboardHtml()}
@@ -1034,7 +1058,19 @@
     if (keys.has('ArrowUp') || keys.has('KeyW')) my -= 1;
     if (keys.has('ArrowDown') || keys.has('KeyS')) my += 1;
 
-    if (Math.abs(touch.vx) > 0.01 || Math.abs(touch.vy) > 0.01) {
+    const mobileTapMove = isMobile() && touch.targetActive;
+    if (mobileTapMove) {
+      const dx = touch.targetX - p.x;
+      const dy = touch.targetY - p.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist > 6) {
+        const step = Math.min(p.speed * 1.22, dist);
+        p.x += dx / dist * step;
+        p.y += dy / dist * step;
+      } else {
+        touch.targetActive = false;
+      }
+    } else if (Math.abs(touch.vx) > 0.01 || Math.abs(touch.vy) > 0.01) {
       mx += touch.vx;
       my += touch.vy;
     }
@@ -1595,50 +1631,26 @@
 
   function resetStick() {
     touch.vx = 0; touch.vy = 0;
-    stickKnob.style.left = '50%';
-    stickKnob.style.top = '50%';
+    touch.targetActive = false;
+    if (stickKnob) {
+      stickKnob.style.left = '50%';
+      stickKnob.style.top = '50%';
+    }
   }
 
-  function handleStick(clientX, clientY) {
-    const r = stickArea.getBoundingClientRect();
-    const cx = r.left + r.width / 2;
-    const cy = r.top + r.height / 2;
-    let dx = clientX - cx;
-    let dy = clientY - cy;
-    const max = 36;
-    const len = Math.hypot(dx, dy);
-    if (len > max) {
-      dx = dx / len * max;
-      dy = dy / len * max;
-    }
-    touch.vx = dx / max;
-    touch.vy = dy / max;
-    stickKnob.style.left = `calc(50% + ${dx}px)`;
-    stickKnob.style.top = `calc(50% + ${dy}px)`;
+  function setTouchMoveTarget(clientX, clientY) {
+    const hudReserve = 84;
+    touch.targetX = Math.max(26, Math.min(game.w - 26, clientX));
+    touch.targetY = Math.max(38, Math.min(game.h - hudReserve, clientY));
+    touch.targetActive = true;
   }
-
-  stickArea.addEventListener('pointerdown', (e) => {
-    touch.moveId = e.pointerId;
-    stickArea.setPointerCapture(e.pointerId);
-    handleStick(e.clientX, e.clientY);
-  });
-  stickArea.addEventListener('pointermove', (e) => {
-    if (touch.moveId === e.pointerId) handleStick(e.clientX, e.clientY);
-  });
-  const stopStick = (e) => {
-    if (touch.moveId === e.pointerId) {
-      touch.moveId = null;
-      resetStick();
-    }
-  };
-  stickArea.addEventListener('pointerup', stopStick);
-  stickArea.addEventListener('pointercancel', stopStick);
 
   fireBtn.addEventListener('pointerdown', (e) => {
     touch.fireId = e.pointerId;
     touch.firing = true;
     fireBtn.setPointerCapture(e.pointerId);
     if (game.state === 'menu' || game.state === 'gameover') startGame();
+    e.preventDefault();
   });
   const stopFire = (e) => {
     if (touch.fireId === e.pointerId) {
@@ -1649,10 +1661,40 @@
   fireBtn.addEventListener('pointerup', stopFire);
   fireBtn.addEventListener('pointercancel', stopFire);
 
-  canvas.addEventListener('pointerdown', () => {
+  canvas.addEventListener('pointerdown', (e) => {
     ensureAudio();
-    if (game.state === 'menu' || game.state === 'gameover') startGame();
+    if (game.state === 'menu' || game.state === 'gameover') {
+      startGame();
+      return;
+    }
+    if (!isMobile()) return;
+    if (touch.fireId === e.pointerId) return;
+    const fireRect = fireBtn.getBoundingClientRect();
+    const inFireZone =
+      e.clientX >= fireRect.left && e.clientX <= fireRect.right &&
+      e.clientY >= fireRect.top && e.clientY <= fireRect.bottom;
+    if (inFireZone) return;
+    touch.moveId = e.pointerId;
+    if (canvas.setPointerCapture) canvas.setPointerCapture(e.pointerId);
+    setTouchMoveTarget(e.clientX, e.clientY);
+    e.preventDefault();
   });
+
+  canvas.addEventListener('pointermove', (e) => {
+    if (!isMobile()) return;
+    if (touch.moveId === e.pointerId) {
+      setTouchMoveTarget(e.clientX, e.clientY);
+      e.preventDefault();
+    }
+  });
+
+  const stopCanvasMove = (e) => {
+    if (touch.moveId === e.pointerId) {
+      touch.moveId = null;
+    }
+  };
+  canvas.addEventListener('pointerup', stopCanvasMove);
+  canvas.addEventListener('pointercancel', stopCanvasMove);
 
   window.addEventListener('resize', resize);
 
