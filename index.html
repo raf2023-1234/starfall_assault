@@ -95,12 +95,7 @@
     user-select: none;
   }
   .stickArea {
-    width: 144px; height: 144px; border-radius: 50%;
-    background: rgba(255,255,255,0.03);
-    border: 1px dashed rgba(255,255,255,0.08);
-    position: relative;
-    opacity: 0;
-    pointer-events: none;
+    display: none !important;
   }
   .stickBase, .stickKnob {
     position: absolute; border-radius: 50%; left: 50%; top: 50%; transform: translate(-50%, -50%);
@@ -125,7 +120,7 @@
     box-shadow: 0 0 25px rgba(255, 90, 120, 0.16);
     color: #ffd9e2; font-weight: 700; font-size: 16px;
   }
-  .tapMoveHint {
+  .gyroHint {
     position: fixed;
     left: 12px;
     bottom: 86px;
@@ -139,6 +134,21 @@
     color: #d7ebff;
     display: none;
     pointer-events: none;
+  }
+  .gyroBtn {
+    position: fixed;
+    left: 12px;
+    bottom: 126px;
+    z-index: 5;
+    padding: 10px 14px;
+    border-radius: 999px;
+    background: rgba(30,90,180,0.28);
+    border: 1px solid rgba(145,205,255,0.26);
+    color: #e9f6ff;
+    font-size: 13px;
+    font-weight: 700;
+    display: none;
+    pointer-events: auto;
   }
   .hintBar {
     position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);
@@ -201,7 +211,7 @@
     .panel .title { font-size: 12px; }
     .small { font-size: 12px; }
     .mobileControls { display: flex; }
-    .tapMoveHint { display: block; }
+    .gyroHint, .gyroBtn { display: block; }
   }
 </style>
 </head>
@@ -219,7 +229,7 @@
   <div class="panel small">
     <div><span class="kbd">WASD / 方向鍵</span> 移動</div>
     <div><span class="kbd">空白鍵</span> 射擊　<span class="kbd">P</span> 暫停</div>
-    <div>手機：點畫面移動、右下開火</div>
+    <div>手機：姿態感應移動、右下開火</div>
   </div>
 </div>
 
@@ -248,7 +258,8 @@
 </div>
 
 <div class="hintBar" id="hintBar">擊落敵艦、吃強化核心，撐過每一關！</div>
-<div class="tapMoveHint" id="tapMoveHint">手機：點哪飛哪｜右下 FIRE 按住射擊</div>
+<button class="gyroBtn" id="gyroBtn" type="button">啟用手機姿態控制</button>
+<div class="gyroHint" id="gyroHint">手機：傾斜移動｜右下 FIRE 按住射擊</div>
 
 <script>
 (() => {
@@ -275,6 +286,7 @@
 
   const keys = new Set();
   const touch = { moveId: null, fireId: null, vx: 0, vy: 0, firing: false, targetActive: false, targetX: 0, targetY: 0 };
+  const gyro = { enabled: false, supported: false, offsetX: 0, offsetY: 0, rawX: 0, rawY: 0, calibrated: false };
 
   const rand = (a, b) => Math.random() * (b - a) + a;
 
@@ -603,6 +615,10 @@
     touch.targetActive = false;
     touch.targetX = game.player.x;
     touch.targetY = game.player.y;
+    gyro.offsetX = 0;
+    gyro.offsetY = 0;
+    gyro.rawX = 0;
+    gyro.rawY = 0;
     makeField();
     overlay.style.display = 'none';
     hintBar.textContent = '擊落敵艦、吃強化核心，撐過每一關！';
@@ -645,7 +661,7 @@
     overlayCard.innerHTML = `
       <h1 style="font-size:clamp(28px,5vw,46px)">操作說明</h1>
       <p>電腦版：<span class="kbd">WASD</span> 或 <span class="kbd">方向鍵</span> 移動，<span class="kbd">空白鍵</span> 持續開火，<span class="kbd">P</span> 暫停。</p>
-      <p>手機版：直接點擊或拖曳畫面左側/中間，戰機就會朝手指位置飛去；右下 <span class="kbd">FIRE</span> 持續開火。</p>
+      <p>手機版：改用姿態感應操作。手機向左傾就往左飛，向右傾就往右飛；往前傾向前飛，往後傾向後飛。右下 <span class="kbd">FIRE</span> 可持續開火。</p>
       <p>每一關會先有一般敵機編隊，之後出現大型 Boss。打倒 Boss 就進入下一關。</p>
       <div class="btnline">
         <button id="backBtn">返回主畫面</button>
@@ -1058,18 +1074,9 @@
     if (keys.has('ArrowUp') || keys.has('KeyW')) my -= 1;
     if (keys.has('ArrowDown') || keys.has('KeyS')) my += 1;
 
-    const mobileTapMove = isMobile() && touch.targetActive;
-    if (mobileTapMove) {
-      const dx = touch.targetX - p.x;
-      const dy = touch.targetY - p.y;
-      const dist = Math.hypot(dx, dy);
-      if (dist > 6) {
-        const step = Math.min(p.speed * 1.22, dist);
-        p.x += dx / dist * step;
-        p.y += dy / dist * step;
-      } else {
-        touch.targetActive = false;
-      }
+    if (isMobile() && gyro.enabled) {
+      mx += gyro.offsetX;
+      my += gyro.offsetY;
     } else if (Math.abs(touch.vx) > 0.01 || Math.abs(touch.vy) > 0.01) {
       mx += touch.vx;
       my += touch.vy;
@@ -1077,8 +1084,9 @@
 
     if (mx || my) {
       const len = Math.max(1, Math.hypot(mx, my));
-      p.x += mx / len * p.speed;
-      p.y += my / len * p.speed;
+      const mobileBoost = isMobile() && gyro.enabled ? 1.18 : 1;
+      p.x += mx / len * p.speed * mobileBoost;
+      p.y += my / len * p.speed * mobileBoost;
     }
     p.x = Math.max(26, Math.min(game.w - 26, p.x));
     p.y = Math.max(38, Math.min(game.h - 30, p.y));
@@ -1638,11 +1646,63 @@
     }
   }
 
-  function setTouchMoveTarget(clientX, clientY) {
-    const hudReserve = 84;
-    touch.targetX = Math.max(26, Math.min(game.w - 26, clientX));
-    touch.targetY = Math.max(38, Math.min(game.h - hudReserve, clientY));
-    touch.targetActive = true;
+  const gyroBtn = document.getElementById('gyroBtn');
+  const gyroHint = document.getElementById('gyroHint');
+
+  function updateGyroHint(msg) {
+    if (gyroHint) gyroHint.textContent = msg;
+  }
+
+  function clampGyro(v) {
+    return Math.max(-1, Math.min(1, v));
+  }
+
+  function calibrateGyro(beta, gamma) {
+    gyro.rawX = gamma || 0;
+    gyro.rawY = beta || 0;
+    gyro.calibrated = true;
+    updateGyroHint('手機：姿態感應已校正｜右下 FIRE 按住射擊');
+  }
+
+  function onDeviceOrientation(event) {
+    gyro.supported = true;
+    const gamma = typeof event.gamma === 'number' ? event.gamma : 0; // 左右
+    const beta = typeof event.beta === 'number' ? event.beta : 0;   // 前後
+    if (!gyro.calibrated) calibrateGyro(beta, gamma);
+
+    const x = (gamma - gyro.rawX) / 22;
+    const y = (beta - gyro.rawY) / 22;
+
+    gyro.offsetX = clampGyro(x);
+    gyro.offsetY = clampGyro(y);
+  }
+
+  async function enableGyro() {
+    if (!isMobile()) return;
+    try {
+      if (typeof DeviceOrientationEvent !== 'undefined' &&
+          typeof DeviceOrientationEvent.requestPermission === 'function') {
+        const state = await DeviceOrientationEvent.requestPermission();
+        if (state !== 'granted') {
+          updateGyroHint('未取得姿態感應權限，請允許後再試');
+          return;
+        }
+      }
+      window.addEventListener('deviceorientation', onDeviceOrientation, true);
+      gyro.enabled = true;
+      gyro.calibrated = false;
+      updateGyroHint('手機：請保持目前角度 1 秒完成校正');
+      if (gyroBtn) gyroBtn.textContent = '重新校正姿態控制';
+    } catch (err) {
+      updateGyroHint('此裝置或瀏覽器不支援姿態感應');
+    }
+  }
+
+  if (gyroBtn) {
+    gyroBtn.addEventListener('click', async () => {
+      ensureAudio();
+      await enableGyro();
+    });
   }
 
   fireBtn.addEventListener('pointerdown', (e) => {
@@ -1664,37 +1724,11 @@
   canvas.addEventListener('pointerdown', (e) => {
     ensureAudio();
     if (game.state === 'menu' || game.state === 'gameover') {
-      startGame();
+      if (typeof startGame === 'function') startGame();
+      e.preventDefault();
       return;
     }
-    if (!isMobile()) return;
-    if (touch.fireId === e.pointerId) return;
-    const fireRect = fireBtn.getBoundingClientRect();
-    const inFireZone =
-      e.clientX >= fireRect.left && e.clientX <= fireRect.right &&
-      e.clientY >= fireRect.top && e.clientY <= fireRect.bottom;
-    if (inFireZone) return;
-    touch.moveId = e.pointerId;
-    if (canvas.setPointerCapture) canvas.setPointerCapture(e.pointerId);
-    setTouchMoveTarget(e.clientX, e.clientY);
-    e.preventDefault();
   });
-
-  canvas.addEventListener('pointermove', (e) => {
-    if (!isMobile()) return;
-    if (touch.moveId === e.pointerId) {
-      setTouchMoveTarget(e.clientX, e.clientY);
-      e.preventDefault();
-    }
-  });
-
-  const stopCanvasMove = (e) => {
-    if (touch.moveId === e.pointerId) {
-      touch.moveId = null;
-    }
-  };
-  canvas.addEventListener('pointerup', stopCanvasMove);
-  canvas.addEventListener('pointercancel', stopCanvasMove);
 
   window.addEventListener('resize', resize);
 
@@ -1999,6 +2033,54 @@ window.playPlayerShot = playPlayerShotLimited;
 document.addEventListener("gameStart", ()=>{
     playerShotCount = 0;
 });
+</script>
+
+
+<script>
+(function(){
+  const gyroBtnEl = document.getElementById('gyroBtn');
+  const gyroHintEl = document.getElementById('gyroHint');
+
+  function syncGyroUiVisibility(){
+    const isMobileView = window.innerWidth <= 900;
+    const playing = typeof game !== 'undefined' && game && game.state === 'playing';
+    if (gyroBtnEl) gyroBtnEl.style.display = (playing && isMobileView) ? 'block' : 'none';
+    if (gyroHintEl) gyroHintEl.style.display = (playing && isMobileView) ? 'block' : 'none';
+  }
+
+  const wrap = (name) => {
+    const fn = window[name];
+    if (typeof fn !== 'function' || fn.__gyroWrapped) return;
+    const wrapped = function(...args){
+      const result = fn.apply(this, args);
+      syncGyroUiVisibility();
+      return result;
+    };
+    wrapped.__gyroWrapped = true;
+    window[name] = wrapped;
+  };
+
+  wrap('startGame');
+  wrap('showMenu');
+  wrap('endGame');
+
+  window.addEventListener('resize', syncGyroUiVisibility);
+  window.addEventListener('load', syncGyroUiVisibility);
+  setTimeout(syncGyroUiVisibility, 50);
+  setTimeout(syncGyroUiVisibility, 500);
+})();
+</script>
+
+
+<script>
+document.addEventListener('click', function(e){
+  const t = e.target;
+  if (!t) return;
+  if (t.id === 'startBtn' || t.id === 'startBtn2' || t.id === 'playNowBtn') {
+    e.preventDefault();
+    if (typeof startGame === 'function') startGame();
+  }
+}, true);
 </script>
 
 </body>
